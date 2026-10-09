@@ -1,0 +1,47 @@
+# Hookmux routing configuration.
+#
+# Every webhook POSTed to the endpoint (any path — hookmux routes on the
+# payload, not the URL) is matched against these routes in order.
+# A route matches when its `match` jq expression (evaluated against the JSON
+# payload) returns anything other than false or null. Routes without a
+# `match` expression match every webhook. Every matching route fires: its
+# forwards and commands all run concurrently.
+#
+# Non-JSON payloads never match a route with a `match` expression, but still
+# reach catch-all routes, which receive the raw body unchanged.
+
+routes:
+  # Forward GitHub push events to a CI system, with an auth header.
+  - name: github-pushes
+    match: '.repository != null and .event == "push"'
+    forward:
+      - url: https://ci.example.com/hooks/github
+        method: POST
+        headers:
+          X-Webhook-Token: super-secret-token
+
+  # Rewrite the payload with jq before forwarding it on.
+  - name: alertmanager-to-relay
+    match: '.alerts != null'
+    forward:
+      - url: http://relay.internal:9094/hook
+        body: '{status: .status, alerts: [.alerts[] | {name: .labels.alertname, severity: .labels.severity}]}'
+
+  # Fan out to several destinations at once, HTTP and HTTPS.
+  - name: generic-copy
+    forward:
+      - url: http://backup.internal:8080/hook
+      - url: https://logs.example.com/ingest
+
+  # Run a local command; the raw webhook body arrives on stdin and
+  # HOOKMUX_ROUTE contains the route name.
+  - name: page-on-fire
+    match: '.status == "firing" and .commonLabels.severity == "critical"'
+    exec:
+      - command: ["/usr/local/bin/notify", "--channel", "ops", "--priority", "high"]
+
+  # Catch-all for anything no other route wanted.
+  - name: everything-else
+    match: 'true'
+    exec:
+      - command: ["/usr/bin/logger", "-t", "hookmux", "-i"]
