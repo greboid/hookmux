@@ -1,0 +1,30 @@
+name: Test and Build
+
+enable-openid-connect: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - v*
+
+jobs:
+  test:
+    runs-on: alpine
+    steps:
+      - uses: actions/toolkit/git-checkout@master
+      - uses: actions/toolkit/go-setup@master
+      - uses: actions/toolkit/go-test@master
+  container:
+    runs-on: alpine
+    steps:
+      - uses: actions/toolkit/git-checkout@master
+      - uses: actions/toolkit/docker-login@master
+        with:
+          audience: u:1:8aad7724-b696-4b69-9aa9-46aab87c4b2f
+          ghcr: ${{ secrets.GHCR_TOKEN }}
+      - uses: actions/toolkit/docker-push@master
+        with:
+          ghcr: true
