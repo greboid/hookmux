@@ -126,6 +126,30 @@ func TestForward(t *testing.T) {
 	h.dispatcher.Shutdown(context.Background())
 }
 
+func TestNoopRoute(t *testing.T) {
+	h := newHarness(t, `
+routes:
+  - name: discard
+    match: '.event == "push"'
+    noop: true
+  - name: other
+    match: '.event == "issues"'
+    forward:
+      - url: http://target
+`)
+
+	w := post(t, h.handler, "/", "application/json", `{"event":"push"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+	}
+	select {
+	case req := <-h.forwarded:
+		t.Errorf("unexpected forward from noop route: %s", req.URL)
+	case <-time.After(200 * time.Millisecond):
+	}
+	h.dispatcher.Shutdown(context.Background())
+}
+
 func TestForwardOverHTTPS(t *testing.T) {
 	h := &testHarness{forwarded: make(chan *http.Request, 4)}
 	tlsTarget := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

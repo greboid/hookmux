@@ -130,6 +130,29 @@ routes: [ this is : not : valid
 	}
 }
 
+func TestParseNoop(t *testing.T) {
+	set := parseConfig(t, `
+routes:
+  - name: discard
+    match: '.event == "ping"'
+    noop: true
+`)
+	if set.Len() != 1 {
+		t.Fatalf("Len() = %d, want 1", set.Len())
+	}
+	if !set.routes[0].route.Noop {
+		t.Error("noop flag was not parsed")
+	}
+	if len(set.routes[0].route.Forward) != 0 || len(set.routes[0].route.Exec) != 0 {
+		t.Error("noop route should have no forward or exec actions")
+	}
+
+	// noop alone satisfies the must-have-actions rule.
+	if _, err := Parse([]byte("\nroutes:\n  - name: discard\n    noop: true\n")); err != nil {
+		t.Errorf("Parse() error = %v, want nil for noop-only route", err)
+	}
+}
+
 func TestLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes.yml")
 	if err := os.WriteFile(path, []byte(sampleConfig), 0o600); err != nil {

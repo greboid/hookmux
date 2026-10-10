@@ -26,6 +26,7 @@ type Route struct {
 	Match   string    `yaml:"match"`
 	Forward []Forward `yaml:"forward"`
 	Exec    []Exec    `yaml:"exec"`
+	Noop    bool      `yaml:"noop"`
 }
 
 type fileConfig struct {
@@ -94,8 +95,8 @@ func Parse(data []byte) (*Set, error) {
 			}
 		}
 
-		if len(r.Forward) == 0 && len(r.Exec) == 0 {
-			return nil, fmt.Errorf("route %s has no forward or exec actions", label)
+		if len(r.Forward) == 0 && len(r.Exec) == 0 && !r.Noop {
+			return nil, fmt.Errorf("route %s has no forward, exec or noop actions", label)
 		}
 
 		set.routes = append(set.routes, c)

@@ -3,8 +3,8 @@
 Hookmux is a webhook multiplexer. It receives webhooks from any service on a
 single endpoint, decides where they should go by evaluating
 [jq](https://jqlang.github.io/jq/) expressions against the payload, and then
-forwards them to other HTTP or HTTPS hook receivers and/or executes local
-commands.
+forwards them to other HTTP or HTTPS hook receivers, executes local commands,
+or silently discards them.
 
 Routing rules live in a YAML file; everything else is configured with
 command-line flags (which can also be set through environment variables).
@@ -73,8 +73,9 @@ Each route supports:
 | `match`  | no       | A jq expression evaluated against the parsed JSON payload. The route matches if it returns anything other than `false` or `null`. Omit it to match every webhook. |
 | `forward`| no       | Zero or more HTTP(S) deliveries (see below).                                                             |
 | `exec`   | no       | Zero or more commands to run (see below).                                                                |
+| `noop`   | no       | Set to `true` to make the route do nothing: matched webhooks are accepted and discarded. Useful for explicitly ignoring events. |
 
-A route must have at least one `forward` or `exec` action. **Every** matching
+A route must have at least one `forward` or `exec` action, or `noop: true`. **Every** matching
 route fires, and all of a route's actions run concurrently — so you can fan a
 single webhook out to many destinations, and a payload that matches several
 routes is delivered to all of them.

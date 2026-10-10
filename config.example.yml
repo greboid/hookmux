@@ -40,6 +40,11 @@ routes:
     exec:
       - command: ["/usr/local/bin/notify", "--channel", "ops", "--priority", "high"]
 
+  # Silently discard noisy events so they never reach the catch-all below.
+  - name: ignore-pings
+    match: '.event == "ping"'
+    noop: true
+
   # Catch-all for anything no other route wanted.
   - name: everything-else
     match: 'true'
