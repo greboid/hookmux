@@ -27,7 +27,8 @@ hookmux [--listen :8080] [--config config.yml] [--timeout 30s] [--max-body 10485
 Environment variable names are the flag name upper-cased with dashes replaced
 by underscores. Command-line flags take precedence over environment variables.
 
-`GET /healthz` returns `200 OK` for liveness checks.
+`GET /` serves a small HTML landing page describing the endpoints. `GET
+/healthz` returns `200 OK` for liveness checks.
 
 ## The webhook endpoint
 

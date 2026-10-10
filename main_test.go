@@ -114,13 +114,29 @@ routes:
 		waitForward(t)
 	})
 
-	t.Run("method not allowed", func(t *testing.T) {
+	t.Run("landing page", func(t *testing.T) {
 		w := do(http.MethodGet, "/", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET / status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Errorf("Content-Type = %q, want text/html", ct)
+		}
+		if !strings.Contains(w.Body.String(), "hookmux") {
+			t.Error("landing page does not mention hookmux")
+		}
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		w := do(http.MethodDelete, "/", "")
 		if w.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("GET / status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+			t.Fatalf("DELETE / status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 		}
 		if allow := w.Header().Get("Allow"); !strings.Contains(allow, "POST") {
 			t.Errorf("Allow header = %q, want it to contain POST", allow)
+		}
+		if w := do(http.MethodGet, "/webhook", ""); w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET /webhook status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
 		}
 	})
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"log/slog"
@@ -39,12 +40,19 @@ func main() {
 	}
 }
 
+//go:embed static/landing.html
+var landingPage string
+
 func newHandler(routeSet *routes.Set, dispatcher *server.Dispatcher, maxBody int64) http.Handler {
 	webhooks := server.NewWebhook(routeSet, dispatcher, maxBody)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(landingPage))
 	})
 	mux.Handle("/", webhooks)
 
