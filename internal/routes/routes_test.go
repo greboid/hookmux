@@ -1,9 +1,14 @@
 package routes
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,13 +117,47 @@ routes:
   - name: bad
     match: '.event == "push"'
 `,
-		"no routes at all":     "",
-		"empty routes list":    "routes: []\n",
-		"routes key only":      "routes:\n",
-		"top level not a map":  "- just a string\n",
-		"route is not a table": "routes: [nope]\n",
+		"no routes at all":      "",
+		"empty routes list":     "routes: []\n",
+		"routes key only":       "routes:\n",
+		"top level not a map":   "- just a string\n",
+		"routes is not a table": "routes: [nope]\n",
 		"invalid yaml": `
 routes: [ this is : not : valid
+`,
+		"unknown verify type": `
+routes:
+  - name: bad
+    verify:
+      type: carrier-pigeon
+      secret: hunter2
+    exec:
+      - command: ["true"]
+`,
+		"verify without secret": `
+routes:
+  - name: bad
+    verify:
+      type: github
+    exec:
+      - command: ["true"]
+`,
+		"verify without type": `
+routes:
+  - name: bad
+    verify:
+      secret: hunter2
+    exec:
+      - command: ["true"]
+`,
+		"hmac verify without header": `
+routes:
+  - name: bad
+    verify:
+      type: hmac-sha256
+      secret: hunter2
+    exec:
+      - command: ["true"]
 `,
 	}
 	for name, config := range tests {
@@ -175,18 +214,18 @@ func TestMatches(t *testing.T) {
 	set := parseConfig(t, sampleConfig)
 
 	pushEvent := map[string]any{"event": "push", "repository": map[string]any{"name": "hookmux"}}
-	matched := set.Matches(pushEvent, true)
+	matched := set.Matches(nil, nil, pushEvent, true)
 	if len(matched) != 2 || matched[0].Route.Name != "pushes" || matched[1].Route.Name != "everything" {
 		t.Errorf("push event matched %v, want [pushes everything]", routeNames(matched))
 	}
 
 	otherEvent := map[string]any{"event": "issue"}
-	matched = set.Matches(otherEvent, true)
+	matched = set.Matches(nil, nil, otherEvent, true)
 	if len(matched) != 1 || matched[0].Route.Name != "everything" {
 		t.Errorf("issue event matched %v, want [everything]", routeNames(matched))
 	}
 
-	matched = set.Matches(nil, false)
+	matched = set.Matches(nil, nil, nil, false)
 	if len(matched) != 1 || matched[0].Route.Name != "everything" {
 		t.Errorf("non-JSON payload matched %v, want [everything]", routeNames(matched))
 	}
@@ -220,7 +259,7 @@ routes:
 			if tt.name != "missing key is falsy" {
 				input["value"] = tt.value
 			}
-			if got := len(set.Matches(input, true)) > 0; got != tt.want {
+			if got := len(set.Matches(nil, nil, input, true)) > 0; got != tt.want {
 				t.Errorf("match = %v, want %v", got, tt.want)
 			}
 		})
@@ -247,7 +286,7 @@ routes:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := len(set.Matches(tt.input, true)) > 0; got != tt.want {
+			if got := len(set.Matches(nil, nil, tt.input, true)) > 0; got != tt.want {
 				t.Errorf("match = %v, want %v", got, tt.want)
 			}
 		})
@@ -263,7 +302,7 @@ routes:
     exec:
       - command: ["true"]
 `)
-	matched := set.Matches(map[string]any{"event": "push"}, true)
+	matched := set.Matches(nil, nil, map[string]any{"event": "push"}, true)
 	if len(matched) != 0 {
 		t.Errorf("failing expression should not match, got %v", routeNames(matched))
 	}
@@ -363,6 +402,48 @@ routes:
 	}
 	if !strings.Contains(string(got), "9007199254740993") {
 		t.Errorf("RenderBody() = %s, want unrounded integer", got)
+	}
+}
+
+func TestVerifyGatedMatching(t *testing.T) {
+	set := parseConfig(t, `
+routes:
+  - name: verified
+    match: '.event == "push"'
+    verify:
+      type: github
+      secret: hunter2
+    exec:
+      - command: ["true"]
+  - name: catch-all
+    exec:
+      - command: ["true"]
+`)
+
+	body := []byte(`{"event":"push"}`)
+	input := map[string]any{"event": "push"}
+
+	sign := func(secret string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		return req
+	}
+
+	matched := set.Matches(sign("hunter2"), body, input, true)
+	if len(matched) != 2 || matched[0].Route.Name != "verified" || matched[1].Route.Name != "catch-all" {
+		t.Errorf("valid signature matched %v, want [verified catch-all]", routeNames(matched))
+	}
+
+	matched = set.Matches(sign("wrong-secret"), body, input, true)
+	if len(matched) != 1 || matched[0].Route.Name != "catch-all" {
+		t.Errorf("invalid signature matched %v, want [catch-all]", routeNames(matched))
+	}
+
+	matched = set.Matches(httptest.NewRequest(http.MethodPost, "/", nil), body, input, true)
+	if len(matched) != 1 || matched[0].Route.Name != "catch-all" {
+		t.Errorf("missing signature matched %v, want [catch-all]", routeNames(matched))
 	}
 }
 

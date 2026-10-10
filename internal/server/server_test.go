@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -741,4 +744,77 @@ func TestParseJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifiedRoute(t *testing.T) {
+	h := newHarness(t, `
+routes:
+  - name: verified
+    match: '.event == "push"'
+    verify:
+      type: github
+      secret: hunter2
+    forward:
+      - url: http://target
+`)
+
+	sign := func(secret, body string) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(body))
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+
+	postSigned := func(signature string) *httptest.ResponseRecorder {
+		body := `{"event":"push"}`
+		req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if signature != "" {
+			req.Header.Set("X-Hub-Signature-256", signature)
+		}
+		w := httptest.NewRecorder()
+		h.handler.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("valid signature is forwarded", func(t *testing.T) {
+		w := postSigned(sign("hunter2", `{"event":"push"}`))
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+		}
+		select {
+		case req := <-h.forwarded:
+			if req.Header.Get("X-Hookmux-Route") != "verified" {
+				t.Errorf("X-Hookmux-Route = %q, want verified", req.Header.Get("X-Hookmux-Route"))
+			}
+			if got := h.bodyOf(t, req); got != `{"event":"push"}` {
+				t.Errorf("forwarded body = %q", got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for forward")
+		}
+	})
+
+	t.Run("invalid signature is not forwarded", func(t *testing.T) {
+		if w := postSigned(sign("wrong-secret", `{"event":"push"}`)); w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+		}
+		select {
+		case req := <-h.forwarded:
+			t.Fatalf("webhook with invalid signature was forwarded to route %q", req.Header.Get("X-Hookmux-Route"))
+		case <-time.After(500 * time.Millisecond):
+		}
+	})
+
+	t.Run("missing signature is not forwarded", func(t *testing.T) {
+		if w := postSigned(""); w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+		}
+		select {
+		case req := <-h.forwarded:
+			t.Fatalf("webhook without signature was forwarded to route %q", req.Header.Get("X-Hookmux-Route"))
+		case <-time.After(500 * time.Millisecond):
+		}
+	})
+
+	h.dispatcher.Shutdown(context.Background())
 }

@@ -9,16 +9,33 @@
 #
 # Non-JSON payloads never match a route with a `match` expression, but still
 # reach catch-all routes, which receive the raw body unchanged.
+#
+# Routes can also demand a valid sender signature via a `verify` block
+# (type + secret); such routes only match requests whose signature validates.
 
 routes:
-  # Forward GitHub push events to a CI system, with an auth header.
+  # Forward GitHub push events to a CI system, verifying GitHub's
+  # X-Hub-Signature-256 signature first.
   - name: github-pushes
     match: '.repository != null and .event == "push"'
+    verify:
+      type: github
+      secret: github-webhook-secret
     forward:
       - url: https://ci.example.com/hooks/github
         method: POST
         headers:
           X-Webhook-Token: super-secret-token
+
+  # Record Stripe payouts; Stripe-Signature carries a timestamped HMAC,
+  # and signatures older than five minutes are rejected.
+  - name: stripe-payouts
+    match: '.type == "payout.paid"'
+    verify:
+      type: stripe
+      secret: whsec_1a2b3c4d5e6f
+    exec:
+      - command: ["/usr/local/bin/record-payout", "--ledger", "ops"]
 
   # Rewrite the payload with jq before forwarding it on.
   - name: alertmanager-to-relay
@@ -26,6 +43,19 @@ routes:
     forward:
       - url: http://relay.internal:9094/hook
         body: '{status: .status, alerts: [.alerts[] | {name: .labels.alertname, severity: .labels.severity}]}'
+
+  # Docker Distribution (registry v2) notifications carry no signature; the
+  # registry is configured to send a static token header instead, which is
+  # compared in constant time. (Docker Hub has no verification mechanism at
+  # all - put it behind an authenticating proxy instead.)
+  - name: registry-pushes
+    match: '.events != null'
+    verify:
+      type: token
+      secret: registry-webhook-token
+      header: X-Hook-Token
+    exec:
+      - command: ["/usr/local/bin/sync-image"]
 
   # Fan out to several destinations at once, HTTP and HTTPS.
   - name: generic-copy

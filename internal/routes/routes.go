@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
+	"github.com/greboid/hookmux/internal/verify"
 	"github.com/itchyny/gojq"
 	"gopkg.in/yaml.v3"
 )
@@ -24,9 +26,20 @@ type Exec struct {
 type Route struct {
 	Name    string    `yaml:"name"`
 	Match   string    `yaml:"match"`
+	Verify  *Verify   `yaml:"verify"`
 	Forward []Forward `yaml:"forward"`
 	Exec    []Exec    `yaml:"exec"`
 	Noop    bool      `yaml:"noop"`
+}
+
+// Verify describes how to check the signature of incoming webhooks. Routes
+// with verification only match requests whose signature validates.
+type Verify struct {
+	Type     string `yaml:"type"`
+	Secret   string `yaml:"secret"`
+	Header   string `yaml:"header"`
+	Encoding string `yaml:"encoding"`
+	URL      string `yaml:"url"`
 }
 
 type fileConfig struct {
@@ -37,6 +50,7 @@ type compiled struct {
 	route      Route
 	match      *gojq.Code
 	transforms []*gojq.Code
+	verify     verify.Verifier
 }
 
 type Set struct {
@@ -95,6 +109,20 @@ func Parse(data []byte) (*Set, error) {
 			}
 		}
 
+		if r.Verify != nil {
+			v, err := verify.New(verify.Config{
+				Type:     r.Verify.Type,
+				Secret:   r.Verify.Secret,
+				Header:   r.Verify.Header,
+				Encoding: r.Verify.Encoding,
+				URL:      r.Verify.URL,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("route %s: %w", label, err)
+			}
+			c.verify = v
+		}
+
 		if len(r.Forward) == 0 && len(r.Exec) == 0 && !r.Noop {
 			return nil, fmt.Errorf("route %s has no forward, exec or noop actions", label)
 		}
@@ -141,11 +169,20 @@ func (m *Match) RenderBody(i int, original []byte, input any) ([]byte, error) {
 	return out, nil
 }
 
-func (s *Set) Matches(input any, jsonValid bool) []*Match {
+// Matches returns every route the webhook satisfies. A route must pass its
+// match expression (against input) and, if it defines one, its signature
+// verification (against the raw request). Routes that fail either are skipped.
+func (s *Set) Matches(r *http.Request, body []byte, input any, jsonValid bool) []*Match {
 	var matched []*Match
 	for _, c := range s.routes {
 		if !jsonValid && c.match != nil {
 			continue
+		}
+		if c.verify != nil {
+			if err := c.verify.Verify(r, body); err != nil {
+				slog.Warn("Webhook verification failed", "route", c.route.Name, "error", err)
+				continue
+			}
 		}
 		ok, err := matches(&c, input)
 		if err != nil {

@@ -54,7 +54,7 @@ func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input, jsonValid := parseJSON(body)
-	matches := h.routes.Matches(input, jsonValid)
+	matches := h.routes.Matches(r, body, input, jsonValid)
 	if len(matches) == 0 {
 		slog.Warn("No routes matched webhook",
 			"method", r.Method,
