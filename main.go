@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/csmith/envflag"
+	"github.com/csmith/envflag/v2"
 	"github.com/csmith/middleware"
 	"github.com/csmith/slogflags"
 
