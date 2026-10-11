@@ -1,7 +1,8 @@
 # Hookmux routing configuration.
 #
-# Every webhook POSTed to the endpoint (any path — hookmux routes on the
-# payload, not the URL) is matched against these routes in order.
+# Every webhook POSTed to the endpoint is matched against these routes in
+# order. By default the URL path is irrelevant, but routes can be restricted
+# to a path prefix with `matchpath`.
 # A route matches when its `match` jq expression (evaluated against the JSON
 # payload) returns anything other than false or null. Routes without a
 # `match` expression match every webhook. Every matching route fires: its

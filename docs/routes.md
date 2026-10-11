@@ -1,7 +1,6 @@
 # Routing configuration
 
-Routes live in the YAML file given by `--config`. See
-[`config.example.yml`](../config.example.yml) for a complete example.
+Routes live in the YAML file given by `--config`. See [`config.example.yml`](../config.example.yml) for a complete example.
 
 ```yaml
 routes:
@@ -29,10 +28,7 @@ Each route supports:
 | `exec`     | no       | Zero or more commands to run (see below).                                                                |
 | `noop`     | no       | Set to `true` to make the route do nothing: matched webhooks are accepted and discarded. Useful for explicitly ignoring events. |
 
-A route must have at least one `forward` or `exec` action, or `noop: true`. **Every** matching
-route fires, and all of a route's actions run concurrently — so you can fan a
-single webhook out to many destinations, and a payload that matches several
-routes is delivered to all of them.
+ A route must have at least one `forward` or `exec` action, or `noop: true`. **Every** matching route fires, and all of a route's actions run concurrently — so you can fan a single webhook out to many destinations, and a payload that matches several routes is delivered to all of them.
 
 ## Forward actions
 
@@ -43,9 +39,7 @@ routes is delivered to all of them.
 | `headers` | no       | Extra headers to set, e.g. authentication tokens. They override the defaults described below.    |
 | `body`    | no       | A jq expression that transforms the payload; the result is sent as JSON. Without it the raw request body is forwarded unchanged. |
 
-Forwarded requests are `POST`ed with the original `Content-Type` (unless
-overridden), a `User-Agent` of `hookmux`, the caller's address in
-`X-Forwarded-For`, and an `X-Hookmux-Route` header naming the route.
+Forwarded requests are `POST`ed with the original `Content-Type` (unless overridden), a `User-Agent` of `hookmux`, the caller's address in `X-Forwarded-For`, and an `X-Hookmux-Route` header naming the route.
 
 ## Exec actions
 
@@ -53,6 +47,4 @@ overridden), a `User-Agent` of `hookmux`, the caller's address in
 |-----------|----------|-------------------------------------------------|
 | `command` | yes      | The command and its arguments, as a YAML array. |
 
-The raw webhook body is piped to the command's stdin, `HOOKMUX_ROUTE` is set to
-the route name in its environment, and a non-zero exit code is logged as an
-error.
+The raw webhook body is piped to the command's stdin, `HOOKMUX_ROUTE` is set to the route name in its environment, and a non-zero exit code is logged as an error.
