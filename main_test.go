@@ -127,6 +127,19 @@ routes:
 		}
 	})
 
+	t.Run("favicon", func(t *testing.T) {
+		w := do(http.MethodGet, "/favicon.svg", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /favicon.svg status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "image/svg+xml") {
+			t.Errorf("Content-Type = %q, want image/svg+xml", ct)
+		}
+		if !strings.Contains(w.Body.String(), "<svg") {
+			t.Error("favicon body is not an SVG document")
+		}
+	})
+
 	t.Run("method not allowed", func(t *testing.T) {
 		w := do(http.MethodDelete, "/", "")
 		if w.Code != http.StatusMethodNotAllowed {

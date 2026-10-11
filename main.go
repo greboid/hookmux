@@ -43,6 +43,9 @@ func main() {
 //go:embed static/landing.html
 var landingPage string
 
+//go:embed static/favicon.svg
+var favicon []byte
+
 func newHandler(routeSet *routes.Set, dispatcher *server.Dispatcher, maxBody int64) http.Handler {
 	webhooks := server.NewWebhook(routeSet, dispatcher, maxBody)
 
@@ -53,6 +56,11 @@ func newHandler(routeSet *routes.Set, dispatcher *server.Dispatcher, maxBody int
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(landingPage))
+	})
+	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(favicon)
 	})
 	mux.Handle("/", webhooks)
 
