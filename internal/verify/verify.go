@@ -1,6 +1,4 @@
-// Package verify validates incoming webhook signatures. Every supported
-// service signs its webhooks differently; a Verifier hides those differences
-// behind a single interface.
+// Package verify validates incoming webhook signatures.
 package verify
 
 import (
@@ -21,10 +19,10 @@ import (
 )
 
 // Timestamp-based schemes reject signatures older than this, matching the
-// defaults used by the services' own SDKs.
+// services' own SDK defaults.
 const TimestampTolerance = 5 * time.Minute
 
-// Errors returned by Verifiers. They are wrapped with details for logging.
+// Errors returned by Verifiers.
 var (
 	ErrMissingSignature = errors.New("missing signature header")
 	ErrMalformed        = errors.New("malformed signature")
@@ -34,7 +32,7 @@ var (
 )
 
 // Config describes how to verify webhooks for a route. Type and Secret are
-// required for every type; the remaining fields are type-specific.
+// always required; other fields are type-specific.
 type Config struct {
 	Type     string `yaml:"type"`
 	Secret   string `yaml:"secret"`
@@ -43,7 +41,6 @@ type Config struct {
 	URL      string `yaml:"url"`      // twilio: public URL senders post to
 }
 
-// Verifier validates a single incoming webhook request.
 type Verifier interface {
 	Verify(r *http.Request, body []byte) error
 }
@@ -103,9 +100,6 @@ func New(cfg Config) (Verifier, error) {
 	}
 }
 
-// githubVerifier checks X-Hub-Signature-256 (HMAC-SHA256) and the legacy
-// X-Hub-Signature (HMAC-SHA1), in "sha256=<hexdigest>" form. Every header
-// present must be valid, so old and new signatures can coexist.
 type githubVerifier struct {
 	secret []byte
 }
@@ -130,8 +124,6 @@ func (v githubVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// gitlabVerifier accepts either the plain X-Gitlab-Token header (compared in
-// constant time) or the X-Gitlab-Signature HMAC-SHA256 hex digest.
 type gitlabVerifier struct {
 	secret string
 }
@@ -156,8 +148,6 @@ func (v gitlabVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// stripeVerifier checks the Stripe-Signature header ("t=<unix>,v1=<hex>,...")
-// where the HMAC-SHA256 input is "<timestamp>.<body>".
 type stripeVerifier struct {
 	secret []byte
 }
@@ -206,8 +196,6 @@ func (v stripeVerifier) Verify(r *http.Request, body []byte) error {
 	return ErrInvalid
 }
 
-// slackVerifier checks X-Slack-Signature ("v0=<hex>") over the string
-// "v0:<timestamp>:<body>" against X-Slack-Request-Timestamp.
 type slackVerifier struct {
 	secret []byte
 }
@@ -237,10 +225,6 @@ func (v slackVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// twilioVerifier checks X-Twilio-Signature: base64(HMAC-SHA1(authToken,
-// url + sorted key/value pairs of the form-encoded body)). The URL is the
-// public address the sender was configured to post to, so it is a
-// configuration field rather than something read from the request.
 type twilioVerifier struct {
 	secret []byte
 	url    string
@@ -281,10 +265,6 @@ func (v twilioVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// standardVerifier implements the Standard Webhooks specification (used by
-// Svix and Svix-based senders): webhook-id, webhook-timestamp and a
-// webhook-signature header of space-separated "v1,<base64>" digests of
-// "<id>.<timestamp>.<body>".
 type standardVerifier struct {
 	secret []byte
 }
@@ -323,9 +303,6 @@ func (v standardVerifier) Verify(r *http.Request, body []byte) error {
 	return ErrInvalid
 }
 
-// hmacBodyVerifier checks a single header holding an HMAC-SHA256 digest of the
-// raw body, hex- or base64-encoded. This covers services that use the common
-// scheme under their own header name (Gitea, Linear, WooCommerce, ...).
 type hmacBodyVerifier struct {
 	secret   []byte
 	header   string
@@ -361,10 +338,6 @@ func (v hmacBodyVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// multiHeaderVerifier validates hex HMAC-SHA256 digests of the raw body under
-// any of several headers; every header present must be valid and at least one
-// is required. Forgejo is a Gitea fork and sends the Gitea header, with the
-// Forgejo-named twin alongside it on newer versions.
 type multiHeaderVerifier struct {
 	secret  []byte
 	headers []string
@@ -391,10 +364,6 @@ func (v multiHeaderVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// tokenVerifier compares a header value against the shared secret in constant
-// time. Neither Docker Hub nor Docker Distribution signs its webhook
-// deliveries; Distribution can be configured to attach a static header, which
-// this checks.
 type tokenVerifier struct {
 	secret string
 	header string
@@ -411,8 +380,6 @@ func (v tokenVerifier) Verify(r *http.Request, body []byte) error {
 	return nil
 }
 
-// prefixHexVerifier checks a header holding "<prefix><hex hmac-sha256>" of the
-// raw body, which is PagerDuty's scheme.
 type prefixHexVerifier struct {
 	secret []byte
 	header string
@@ -437,8 +404,6 @@ func checkHMACHex(sig, prefix string, newHash func() hash.Hash, secret, body []b
 	return nil
 }
 
-// standardSecret strips the whsec_ prefix Standard Webhooks keys carry and
-// decodes the base64 payload; keys without the prefix are used verbatim.
 func standardSecret(secret string) ([]byte, error) {
 	encoded, ok := strings.CutPrefix(secret, "whsec_")
 	if !ok {

@@ -34,8 +34,8 @@ type Route struct {
 	Noop      bool      `yaml:"noop"`
 }
 
-// MatchPath is one or more URL path prefixes a route can be restricted to.
-// It accepts either a single string or a list of strings in YAML.
+// MatchPath is one or more URL path prefixes a route is restricted to.
+// YAML accepts either a single string or a list.
 type MatchPath []string
 
 func (p *MatchPath) UnmarshalYAML(value *yaml.Node) error {
@@ -50,8 +50,8 @@ func (p *MatchPath) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// Verify describes how to check the signature of incoming webhooks. Routes
-// with verification only match requests whose signature validates.
+// Verify describes signature checking for a route; routes with verification
+// only match requests whose signature validates.
 type Verify struct {
 	Type     string `yaml:"type"`
 	Secret   string `yaml:"secret"`
@@ -196,9 +196,8 @@ func (m *Match) RenderBody(i int, original []byte, input any) ([]byte, error) {
 	return out, nil
 }
 
-// Matches returns every route the webhook satisfies. A route must pass its
-// match expression (against input) and, if it defines one, its signature
-// verification (against the raw request). Routes that fail either are skipped.
+// Matches returns every route whose match expression and signature
+// verification (if any) the webhook satisfies.
 func (s *Set) Matches(r *http.Request, body []byte, input any, jsonValid bool) []*Match {
 	var matched []*Match
 	for _, c := range s.routes {
@@ -253,8 +252,6 @@ func compileJQ(expr string) (*gojq.Code, error) {
 	return gojq.Compile(query)
 }
 
-// normalizePath canonicalises a matchpath prefix so comparisons are
-// consistent: a leading slash is added, trailing slashes are removed.
 func normalizePath(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
@@ -270,9 +267,6 @@ func normalizePath(p string) (string, error) {
 	return p, nil
 }
 
-// pathMatches reports whether the request path equals one of the prefixes or
-// starts with one at a segment boundary, so /github matches /github/pushes
-// but not /githubs.
 func pathMatches(prefixes []string, path string) bool {
 	for _, p := range prefixes {
 		if p == "/" || path == p || strings.HasPrefix(path, p+"/") {
