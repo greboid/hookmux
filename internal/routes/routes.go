@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/greboid/hookmux/internal/verify"
 	"github.com/itchyny/gojq"
@@ -24,12 +25,29 @@ type Exec struct {
 }
 
 type Route struct {
-	Name    string    `yaml:"name"`
-	Match   string    `yaml:"match"`
-	Verify  *Verify   `yaml:"verify"`
-	Forward []Forward `yaml:"forward"`
-	Exec    []Exec    `yaml:"exec"`
-	Noop    bool      `yaml:"noop"`
+	Name      string    `yaml:"name"`
+	Match     string    `yaml:"match"`
+	MatchPath MatchPath `yaml:"matchpath"`
+	Verify    *Verify   `yaml:"verify"`
+	Forward   []Forward `yaml:"forward"`
+	Exec      []Exec    `yaml:"exec"`
+	Noop      bool      `yaml:"noop"`
+}
+
+// MatchPath is one or more URL path prefixes a route can be restricted to.
+// It accepts either a single string or a list of strings in YAML.
+type MatchPath []string
+
+func (p *MatchPath) UnmarshalYAML(value *yaml.Node) error {
+	if value.Tag == "!!seq" {
+		return value.Decode((*[]string)(p))
+	}
+	var single string
+	if err := value.Decode(&single); err != nil {
+		return err
+	}
+	*p = MatchPath{single}
+	return nil
 }
 
 // Verify describes how to check the signature of incoming webhooks. Routes
@@ -49,6 +67,7 @@ type fileConfig struct {
 type compiled struct {
 	route      Route
 	match      *gojq.Code
+	matchPaths []string
 	transforms []*gojq.Code
 	verify     verify.Verifier
 }
@@ -81,6 +100,14 @@ func Parse(data []byte) (*Set, error) {
 			label = fmt.Sprintf("#%d", i)
 		}
 		c := compiled{route: r, transforms: make([]*gojq.Code, len(r.Forward))}
+
+		for _, p := range r.MatchPath {
+			normalized, err := normalizePath(p)
+			if err != nil {
+				return nil, fmt.Errorf("route %s: invalid matchpath %q: %w", label, p, err)
+			}
+			c.matchPaths = append(c.matchPaths, normalized)
+		}
 
 		if r.Match != "" {
 			code, err := compileJQ(r.Match)
@@ -175,6 +202,9 @@ func (m *Match) RenderBody(i int, original []byte, input any) ([]byte, error) {
 func (s *Set) Matches(r *http.Request, body []byte, input any, jsonValid bool) []*Match {
 	var matched []*Match
 	for _, c := range s.routes {
+		if len(c.matchPaths) > 0 && (r == nil || !pathMatches(c.matchPaths, r.URL.Path)) {
+			continue
+		}
 		if !jsonValid && c.match != nil {
 			continue
 		}
@@ -221,4 +251,33 @@ func compileJQ(expr string) (*gojq.Code, error) {
 		return nil, err
 	}
 	return gojq.Compile(query)
+}
+
+// normalizePath canonicalises a matchpath prefix so comparisons are
+// consistent: a leading slash is added, trailing slashes are removed.
+func normalizePath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", errors.New("path is empty")
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		p = "/"
+	}
+	return p, nil
+}
+
+// pathMatches reports whether the request path equals one of the prefixes or
+// starts with one at a segment boundary, so /github matches /github/pushes
+// but not /githubs.
+func pathMatches(prefixes []string, path string) bool {
+	for _, p := range prefixes {
+		if p == "/" || path == p || strings.HasPrefix(path, p+"/") {
+			return true
+		}
+	}
+	return false
 }

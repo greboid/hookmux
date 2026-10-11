@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -444,6 +445,138 @@ routes:
 	matched = set.Matches(httptest.NewRequest(http.MethodPost, "/", nil), body, input, true)
 	if len(matched) != 1 || matched[0].Route.Name != "catch-all" {
 		t.Errorf("missing signature matched %v, want [catch-all]", routeNames(matched))
+	}
+}
+
+func TestMatchPath(t *testing.T) {
+	set := parseConfig(t, `
+routes:
+  - name: github
+    matchpath: /github
+    exec:
+      - command: ["true"]
+  - name: hooks-multi
+    matchpath: [/gitea, /hooks/pagerduty]
+    exec:
+      - command: ["true"]
+  - name: combined
+    match: '.event == "push"'
+    matchpath: /github
+    exec:
+      - command: ["true"]
+  - name: catch-all
+    exec:
+      - command: ["true"]
+`)
+
+	post := func(path string) *http.Request {
+		return httptest.NewRequest(http.MethodPost, path, nil)
+	}
+	pushEvent := map[string]any{"event": "push"}
+
+	tests := []struct {
+		name string
+		req  *http.Request
+		want []string
+	}{
+		{"exact path", post("/github"), []string{"github", "combined", "catch-all"}},
+		{"deeper path", post("/github/pushes"), []string{"github", "combined", "catch-all"}},
+		{"trailing slash", post("/github/"), []string{"github", "combined", "catch-all"}},
+		{"different segment", post("/githubs"), []string{"catch-all"}},
+		{"unrelated path", post("/gitlab"), []string{"catch-all"}},
+		{"root path", post("/"), []string{"catch-all"}},
+		{"first listed path", post("/gitea/x"), []string{"hooks-multi", "catch-all"}},
+		{"second listed path", post("/hooks/pagerduty"), []string{"hooks-multi", "catch-all"}},
+		{"listed path prefix only", post("/hooks"), []string{"catch-all"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matched := set.Matches(tt.req, nil, pushEvent, true)
+			if got := routeNames(matched); !slices.Equal(got, tt.want) {
+				t.Errorf("path %s matched %v, want %v", tt.req.URL.Path, got, tt.want)
+			}
+		})
+	}
+
+	// matchpath and match must both pass.
+	matched := set.Matches(post("/github"), nil, map[string]any{"event": "issue"}, true)
+	if got := routeNames(matched); !slices.Equal(got, []string{"github", "catch-all"}) {
+		t.Errorf("non-push to /github matched %v, want [github catch-all]", got)
+	}
+
+	// A matchpath route still matches non-JSON payloads; a route needing both
+	// path and payload does not.
+	matched = set.Matches(post("/github"), nil, nil, false)
+	if got := routeNames(matched); !slices.Equal(got, []string{"github", "catch-all"}) {
+		t.Errorf("non-JSON to /github matched %v, want [github catch-all]", got)
+	}
+
+	// A matchpath route cannot match without a request.
+	matched = set.Matches(nil, nil, pushEvent, true)
+	if got := routeNames(matched); !slices.Equal(got, []string{"catch-all"}) {
+		t.Errorf("nil request matched %v, want [catch-all]", got)
+	}
+}
+
+func TestMatchPathParsing(t *testing.T) {
+	set := parseConfig(t, `
+routes:
+  - name: single
+    matchpath: github
+    exec:
+      - command: ["true"]
+  - name: list
+    matchpath: [/a/, "b", /c/d]
+    exec:
+      - command: ["true"]
+  - name: root
+    matchpath: /
+    exec:
+      - command: ["true"]
+`)
+
+	if got := set.routes[0].matchPaths; !slices.Equal(got, []string{"/github"}) {
+		t.Errorf("single matchpath = %v, want [/github] (leading slash added)", got)
+	}
+	if got := set.routes[1].matchPaths; !slices.Equal(got, []string{"/a", "/b", "/c/d"}) {
+		t.Errorf("list matchpath = %v, want [/a /b /c/d] (trailing slashes trimmed)", got)
+	}
+	if got := set.routes[2].matchPaths; !slices.Equal(got, []string{"/"}) {
+		t.Errorf("root matchpath = %v, want [/]", got)
+	}
+
+	// The root prefix matches any path, but the other routes' own prefixes
+	// still exclude them.
+	req := httptest.NewRequest(http.MethodPost, "/anything/at/all", nil)
+	matched := set.Matches(req, nil, nil, true)
+	if got := routeNames(matched); !slices.Equal(got, []string{"root"}) {
+		t.Errorf("root matchpath matched %v, want [root]", got)
+	}
+}
+
+func TestMatchPathParseErrors(t *testing.T) {
+	tests := map[string]string{
+		"empty string": `
+routes:
+  - name: bad
+    matchpath: ""
+    exec:
+      - command: ["true"]
+`,
+		"empty list entry": `
+routes:
+  - name: bad
+    matchpath: [/ok, ""]
+    exec:
+      - command: ["true"]
+`,
+	}
+	for name, config := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(config)); err == nil {
+				t.Errorf("Parse() succeeded, want error")
+			}
+		})
 	}
 }
 

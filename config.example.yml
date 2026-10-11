@@ -7,13 +7,20 @@
 # `match` expression match every webhook. Every matching route fires: its
 # forwards and commands all run concurrently.
 #
-# Non-JSON payloads never match a route with a `match` expression, but still
-# reach catch-all routes, which receive the raw body unchanged.
+# Routes can additionally be restricted to a request path prefix with
+# `matchpath` (a single path or a list): `matchpath: /github` matches
+# /github and /github/pushes, but not /githubs. Both `match` and `matchpath`
+# must pass when both are present; a `matchpath`-only route also matches
+# non-JSON payloads.
 #
-# Routes can also demand a valid sender signature via a `verify` block
-# (type + secret); such routes only match requests whose signature validates.
-
 routes:
+  # Route on the request path alone: anything posted under /healthchecks
+  # (with or without a JSON body) is relayed as-is.
+  - name: healthchecks-by-path
+    matchpath: /healthchecks
+    forward:
+      - url: https://monitoring.example.com/hooks/ping
+
   # Forward GitHub push events to a CI system, verifying GitHub's
   # X-Hub-Signature-256 signature first.
   - name: github-pushes

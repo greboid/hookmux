@@ -2,7 +2,8 @@
 
 Hookmux is a webhook multiplexer. It receives webhooks from any service on a
 single endpoint, decides where they should go by evaluating
-[jq](https://jqlang.github.io/jq/) expressions against the payload, and then
+[jq](https://jqlang.github.io/jq/) expressions against the payload (and
+optionally matching on the request path), and then
 forwards them to other HTTP or HTTPS hook receivers, executes local commands,
 or silently discards them.
 
@@ -33,7 +34,7 @@ by underscores. Command-line flags take precedence over environment variables.
 ## The webhook endpoint
 
 All webhooks arrive at the root endpoint — any path works, since routing is
-based purely on the payload:
+based on the payload:
 
 ```
 POST /
@@ -41,7 +42,10 @@ POST /
 
 `PUT` and `PATCH` are accepted as well, and sub-paths like `/github` or
 `/alertmanager` behave identically, which is handy for services that insist on
-posting to their own paths. The request body should be JSON, since
+posting to their own paths. Routes that want to key off the path can do so
+with a [`matchpath`](#routing-configuration) prefix, which is also how you
+direct different senders posting to different sub-paths to different routes.
+The request body should be JSON, since
 that is what jq expressions evaluate against, but any payload is accepted —
 non-JSON payloads simply never match a route that has a `match` expression,
 while catch-all routes (no `match`) still receive the raw body. The response is
@@ -68,19 +72,43 @@ routes:
 
 Each route supports:
 
-| Field    | Required | Description                                                                                             |
-|----------|----------|---------------------------------------------------------------------------------------------------------|
-| `name`   | no       | Human-readable name used in logs and the `HOOKMUX_ROUTE` environment variable.                           |
-| `match`  | no       | A jq expression evaluated against the parsed JSON payload. The route matches if it returns anything other than `false` or `null`. Omit it to match every webhook. |
-| `verify` | no       | Signature verification for incoming webhooks. The route only matches requests whose signature validates (see below). |
-| `forward`| no       | Zero or more HTTP(S) deliveries (see below).                                                             |
-| `exec`   | no       | Zero or more commands to run (see below).                                                                |
-| `noop`   | no       | Set to `true` to make the route do nothing: matched webhooks are accepted and discarded. Useful for explicitly ignoring events. |
+| Field      | Required | Description                                                                                             |
+|------------|----------|---------------------------------------------------------------------------------------------------------|
+| `name`     | no       | Human-readable name used in logs and the `HOOKMUX_ROUTE` environment variable.                           |
+| `match`    | no       | A jq expression evaluated against the parsed JSON payload. The route matches if it returns anything other than `false` or `null`. Omit it to match every webhook. |
+| `matchpath`| no       | One or more URL path prefixes the request path must match (see below). Accepts a single string or a list. Omit it to match any path. |
+| `verify`   | no       | Signature verification for incoming webhooks. The route only matches requests whose signature validates (see below). |
+| `forward`  | no       | Zero or more HTTP(S) deliveries (see below).                                                             |
+| `exec`     | no       | Zero or more commands to run (see below).                                                                |
+| `noop`     | no       | Set to `true` to make the route do nothing: matched webhooks are accepted and discarded. Useful for explicitly ignoring events. |
 
 A route must have at least one `forward` or `exec` action, or `noop: true`. **Every** matching
 route fires, and all of a route's actions run concurrently — so you can fan a
 single webhook out to many destinations, and a payload that matches several
 routes is delivered to all of them.
+
+#### Path matching
+
+A route with a `matchpath` only fires for requests sent to a matching path.
+Each value is treated as a path prefix and compared at a path-segment
+boundary: `matchpath: /github` matches `/github` and `/github/pushes`, but not
+`/githubs` or `/gitlab`. A route may list several prefixes, in which case any
+of them can match:
+
+```yaml
+routes:
+  - name: forge-pushes
+    matchpath: [/github, /gitea]
+    match: '.event == "push"'
+    forward:
+      - url: https://ci.example.com/hooks/forge
+```
+
+Leading and trailing slashes are optional and normalised away, so `github` and
+`/github/` both mean `/github`. Prefix matching never inspects the query
+string, and works regardless of the payload — a `matchpath` route matches even
+non-JSON payloads, as long as no `match` expression is also defined (when both
+are present, both must pass).
 
 ### Verifying webhooks
 
