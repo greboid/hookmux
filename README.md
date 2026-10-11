@@ -11,7 +11,7 @@ Routing rules live in a YAML file; everything else is configured with command-li
 ## Usage
 
 ```
-hookmux [--listen :8080] [--config config.yml] [--timeout 30s] [--max-body 10485760] [log flags]
+hookmux [--listen :8080] [--config config.yml] [--timeout 30s] [--max-body 10485760] [--record none] [--record-dir recordings] [log flags]
 ```
 | Flag           | Environment variable | Default      | Description                                      |
 | -------------- | -------------------- | ------------ | ------------------------------------------------ |
@@ -19,6 +19,8 @@ hookmux [--listen :8080] [--config config.yml] [--timeout 30s] [--max-body 10485
 | `--config`     | `CONFIG`             | `config.yml` | Path to the YAML routing configuration.          |
 | `--timeout`    | `TIMEOUT`            | `30s`        | Maximum time allowed per forward or exec action. |
 | `--max-body`   | `MAX_BODY`           | `10485760`   | Maximum accepted webhook body size, in bytes.    |
+| `--record`     | `RECORD`             | `none`       | Payload recorder: `none`, `unhandled` or `all`.  |
+| `--record-dir` | `RECORD_DIR`         | `recordings` | Directory to write recorded payloads into.       |
 | `--log.level`  | `LOG_LEVEL`          | `info`       | Log level: `debug`, `info`, `warn` or `error`.   |
 | `--log.format` | `LOG_FORMAT`         | `text`       | Log format: `text` or `json`.                    |
 
@@ -29,3 +31,4 @@ Environment variable names are the flag name upper-cased with dashes replaced by
 - [Routing configuration](docs/routes.md) — route fields, forward and exec actions
 - [Matching](docs/matching.md) — jq payload expressions and path prefixes
 - [Verifying webhooks](docs/verify.md) — signature schemes for GitHub, GitLab, Stripe and more
+- [Recording payloads](docs/recording.md) — capture received webhooks to disk for inspection or replay

@@ -16,6 +16,7 @@ import (
 	"github.com/csmith/middleware"
 	"github.com/csmith/slogflags"
 
+	"github.com/greboid/hookmux/internal/record"
 	"github.com/greboid/hookmux/internal/routes"
 	"github.com/greboid/hookmux/internal/server"
 )
@@ -25,6 +26,8 @@ var (
 	routesPath    = flag.String("config", "config.yml", "Path to the YAML file describing the webhook routes.")
 	actionTimeout = flag.Duration("timeout", 30*time.Second, "Maximum time allowed for each forward or exec action.")
 	maxBodyBytes  = flag.Int64("max-body", 10*1024*1024, "Maximum size in bytes of an accepted webhook body.")
+	recordMode    = flag.String("record", "none", "Record received payloads to disk: none, unhandled or all.")
+	recordDir     = flag.String("record-dir", "recordings", "Directory to write recorded payloads into.")
 )
 
 func main() {
@@ -46,8 +49,8 @@ var landingPage string
 //go:embed static/favicon.svg
 var favicon []byte
 
-func newHandler(routeSet *routes.Set, dispatcher *server.Dispatcher, maxBody int64) http.Handler {
-	webhooks := server.NewWebhook(routeSet, dispatcher, maxBody)
+func newHandler(routeSet *routes.Set, dispatcher *server.Dispatcher, recorder *record.Recorder, maxBody int64) http.Handler {
+	webhooks := server.NewWebhook(routeSet, dispatcher, recorder, maxBody)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -84,7 +87,18 @@ func run() error {
 	slog.Info("Loaded routing configuration", "path", *routesPath, "routes", routeSet.Len())
 
 	dispatcher := server.NewDispatcher(*actionTimeout, nil)
-	handler := newHandler(routeSet, dispatcher, *maxBodyBytes)
+
+	var recorder *record.Recorder
+	if mode, err := record.ParseMode(*recordMode); err != nil {
+		return err
+	} else if mode != record.ModeNone {
+		recorder, err = record.New(*recordDir, mode)
+		if err != nil {
+			return err
+		}
+		slog.Info("Recording payloads", "mode", *recordMode, "directory", *recordDir)
+	}
+	handler := newHandler(routeSet, dispatcher, recorder, *maxBodyBytes)
 
 	srv := &http.Server{
 		Addr:              *listenAddress,

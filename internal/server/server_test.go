@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/greboid/hookmux/internal/record"
 	"github.com/greboid/hookmux/internal/routes"
 )
 
@@ -77,7 +79,7 @@ func newHarness(t *testing.T, config string) *testHarness {
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 	h.dispatcher = NewDispatcher(5*time.Second, client)
-	h.handler = NewWebhook(set, h.dispatcher, 1024*1024)
+	h.handler = NewWebhook(set, h.dispatcher, nil, 1024*1024)
 	return h
 }
 
@@ -174,7 +176,7 @@ routes:
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 	h.dispatcher = NewDispatcher(5*time.Second, tlsTarget.Client())
-	h.handler = NewWebhook(set, h.dispatcher, 1024*1024)
+	h.handler = NewWebhook(set, h.dispatcher, nil, 1024*1024)
 
 	w := post(t, h.handler, "/", "application/json", `{"event":"push"}`)
 	if w.Code != http.StatusAccepted {
@@ -410,7 +412,7 @@ func TestForwardDestinationErrorStillAccepted(t *testing.T) {
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 	h.dispatcher = NewDispatcher(5*time.Second, client)
-	h.handler = NewWebhook(set, h.dispatcher, 1024*1024)
+	h.handler = NewWebhook(set, h.dispatcher, nil, 1024*1024)
 
 	if w := post(t, h.handler, "/", "application/json", `{"event":"push"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d despite destination error", w.Code, http.StatusAccepted)
@@ -436,7 +438,7 @@ routes:
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 	d := NewDispatcher(5*time.Second, nil)
-	handler := NewWebhook(set, d, 1024*1024)
+	handler := NewWebhook(set, d, nil, 1024*1024)
 
 	if w := post(t, handler, "/", "application/json", `{"event":"push"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d despite unreachable destination", w.Code, http.StatusAccepted)
@@ -460,7 +462,7 @@ func TestForwardTimesOut(t *testing.T) {
 			t.Fatalf("routes.Parse() error = %v", err)
 		}
 		h.dispatcher = NewDispatcher(150*time.Millisecond, client)
-		h.handler = NewWebhook(set, h.dispatcher, 1024*1024)
+		h.handler = NewWebhook(set, h.dispatcher, nil, 1024*1024)
 
 		start := time.Now()
 		if w := post(t, h.handler, "/", "application/json", `{"event":"push"}`); w.Code != http.StatusAccepted {
@@ -495,7 +497,7 @@ func TestShutdownWaitsForInFlightForward(t *testing.T) {
 			t.Fatalf("routes.Parse() error = %v", err)
 		}
 		d := NewDispatcher(time.Minute, client)
-		handler := NewWebhook(set, d, 1024*1024)
+		handler := NewWebhook(set, d, nil, 1024*1024)
 
 		if w := post(t, handler, "/", "application/json", `{"event":"push"}`); w.Code != http.StatusAccepted {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
@@ -603,7 +605,7 @@ routes:
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 	d := NewDispatcher(250*time.Millisecond, nil)
-	handler := NewWebhook(set, d, 1024*1024)
+	handler := NewWebhook(set, d, nil, 1024*1024)
 
 	start := time.Now()
 	if w := post(t, handler, "/", "application/json", `{"event":"push"}`); w.Code != http.StatusAccepted {
@@ -667,7 +669,7 @@ func TestBodyTooLarge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
-	handler := NewWebhook(set, NewDispatcher(time.Second, nil), 8)
+	handler := NewWebhook(set, NewDispatcher(time.Second, nil), nil, 8)
 	w := post(t, handler, "/webhook", "application/json", `{"event":"push","lots":"of data here"}`)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
@@ -702,7 +704,7 @@ func TestRequestBodyClosedOnEveryPath(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		tracker := &closeTrackingBody{r: strings.NewReader(`{"event":"push"}`)}
-		handler := NewWebhook(set, NewDispatcher(5*time.Second, nil), 1024*1024)
+		handler := NewWebhook(set, NewDispatcher(5*time.Second, nil), nil, 1024*1024)
 		if w := serve(handler, tracker); w.Code != http.StatusAccepted {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
 		}
@@ -713,7 +715,7 @@ func TestRequestBodyClosedOnEveryPath(t *testing.T) {
 
 	t.Run("body too large", func(t *testing.T) {
 		tracker := &closeTrackingBody{r: strings.NewReader(`{"event":"push","lots":"of data here"}`)}
-		handler := NewWebhook(set, NewDispatcher(time.Second, nil), 8)
+		handler := NewWebhook(set, NewDispatcher(time.Second, nil), nil, 8)
 		if w := serve(handler, tracker); w.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
 		}
@@ -817,4 +819,95 @@ routes:
 	})
 
 	h.dispatcher.Shutdown(context.Background())
+}
+
+func TestRecordPayloads(t *testing.T) {
+	config := `
+routes:
+  - name: pushes
+    match: '.event == "push"'
+    forward:
+      - url: http://target
+`
+	// Recording happens synchronously inside ServeHTTP, so the files exist
+	// once the POST returns.
+	listDir := func(t *testing.T, dir string) []string {
+		t.Helper()
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("ReadDir error = %v", err)
+		}
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		return names
+	}
+	readEntry := func(t *testing.T, dir, name string) record.Entry {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("ReadFile error = %v", err)
+		}
+		var e record.Entry
+		if err := json.Unmarshal(data, &e); err != nil {
+			t.Fatalf("recorded file is not valid JSON: %v", err)
+		}
+		return e
+	}
+
+	t.Run("unhandled only", func(t *testing.T) {
+		h := newHarness(t, config)
+		dir := t.TempDir()
+		rec, err := record.New(dir, record.ModeUnhandled)
+		if err != nil {
+			t.Fatalf("record.New() error = %v", err)
+		}
+		h.handler.recorder = rec
+
+		post(t, h.handler, "/webhook", "application/json", `{"event":"push"}`)
+		post(t, h.handler, "/webhook", "application/json", `{"event":"issues"}`)
+
+		names := listDir(t, dir)
+		if len(names) != 1 {
+			t.Fatalf("recorded %d files, want 1 (only the unmatched payload)", len(names))
+		}
+		e := readEntry(t, dir, names[0])
+		if len(e.Matched) != 0 {
+			t.Errorf("matched = %v, want none", e.Matched)
+		}
+		if e.Body != `{"event":"issues"}` {
+			t.Errorf("body = %q, want the unmatched payload", e.Body)
+		}
+	})
+
+	t.Run("all", func(t *testing.T) {
+		h := newHarness(t, config)
+		dir := t.TempDir()
+		rec, err := record.New(dir, record.ModeAll)
+		if err != nil {
+			t.Fatalf("record.New() error = %v", err)
+		}
+		h.handler.recorder = rec
+
+		post(t, h.handler, "/webhook", "application/json", `{"event":"push"}`)
+		post(t, h.handler, "/webhook", "application/json", `{"event":"issues"}`)
+
+		names := listDir(t, dir)
+		if len(names) != 2 {
+			t.Fatalf("recorded %d files, want 2", len(names))
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		h := newHarness(t, config)
+		dir := t.TempDir()
+
+		post(t, h.handler, "/webhook", "application/json", `{"event":"push"}`)
+		post(t, h.handler, "/webhook", "application/json", `{"event":"issues"}`)
+
+		if names := listDir(t, dir); len(names) != 0 {
+			t.Errorf("recorded %d files with no recorder attached, want 0", len(names))
+		}
+	})
 }

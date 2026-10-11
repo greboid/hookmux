@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/greboid/hookmux/internal/record"
 	"github.com/greboid/hookmux/internal/routes"
 )
 
@@ -24,11 +25,12 @@ var acceptedMethods = []string{http.MethodPost, http.MethodPut, http.MethodPatch
 type Webhook struct {
 	routes     *routes.Set
 	dispatcher *Dispatcher
+	recorder   *record.Recorder
 	maxBody    int64
 }
 
-func NewWebhook(rs *routes.Set, d *Dispatcher, maxBody int64) *Webhook {
-	return &Webhook{routes: rs, dispatcher: d, maxBody: maxBody}
+func NewWebhook(rs *routes.Set, d *Dispatcher, rec *record.Recorder, maxBody int64) *Webhook {
+	return &Webhook{routes: rs, dispatcher: d, recorder: rec, maxBody: maxBody}
 }
 
 func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +57,11 @@ func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	input, jsonValid := parseJSON(body)
 	matches := h.routes.Matches(r, body, input, jsonValid)
+	names := make([]string, len(matches))
+	for i, m := range matches {
+		names[i] = m.Route.Name
+	}
+	h.recorder.Record(r, body, names)
 	if len(matches) == 0 {
 		slog.Warn("No routes matched webhook",
 			"method", r.Method,
@@ -63,10 +70,6 @@ func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"json", jsonValid,
 		)
 	} else {
-		names := make([]string, len(matches))
-		for i, m := range matches {
-			names[i] = m.Route.Name
-		}
 		slog.Info("Matched routes for webhook",
 			"routes", strings.Join(names, ","),
 			"method", r.Method,

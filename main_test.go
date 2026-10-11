@@ -61,7 +61,7 @@ routes:
 		t.Fatalf("routes.Parse() error = %v", err)
 	}
 
-	handler := newHandler(routeSet, server.NewDispatcher(5*time.Second, client), 64*1024)
+	handler := newHandler(routeSet, server.NewDispatcher(5*time.Second, client), nil, 64*1024)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
