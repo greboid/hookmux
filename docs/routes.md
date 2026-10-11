@@ -41,6 +41,8 @@ Each route supports:
 
 Forwarded requests are `POST`ed with the original `Content-Type` (unless overridden), a `User-Agent` of `hookmux`, the caller's address in `X-Forwarded-For`, and an `X-Hookmux-Route` header naming the route.
 
+When the body is forwarded unchanged (no `body` transform), the standard webhook signature, event and delivery headers are also passed through — `X-Hub-Signature`/`X-Hub-Signature-256`/`X-GitHub-Event`/`X-GitHub-Delivery`, the `X-Forgejo-*` and `X-Gitea-*` equivalents. This lets the destination re-verify the sender's original signature; it would be invalid after a `body` transform, so in that case these headers are dropped. Configured `headers` override any passed-through header.
+
 ## Exec actions
 
 | Field     | Required | Description                                     |

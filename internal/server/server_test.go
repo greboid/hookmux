@@ -326,6 +326,118 @@ routes:
 	h.dispatcher.Shutdown(context.Background())
 }
 
+func TestForwardPassesThroughSignatureHeaders(t *testing.T) {
+	h := newHarness(t, `
+routes:
+  - name: passthrough
+    match: 'true'
+    forward:
+      - url: http://target
+`)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"event":"push"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forgejo-Signature", "forgejo-sig")
+	req.Header.Set("X-Forgejo-Event", "push")
+	req.Header.Set("X-Gitea-Signature", "gitea-sig")
+	req.Header.Set("X-Hub-Signature", "sha1=github-sig")
+	req.Header.Set("X-Custom-Header", "not-a-signature")
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+	}
+
+	select {
+	case fwd := <-h.forwarded:
+		if got := fwd.Header.Get("X-Forgejo-Signature"); got != "forgejo-sig" {
+			t.Errorf("X-Forgejo-Signature = %q, want forgejo-sig", got)
+		}
+		if got := fwd.Header.Get("X-Forgejo-Event"); got != "push" {
+			t.Errorf("X-Forgejo-Event = %q, want push", got)
+		}
+		if got := fwd.Header.Get("X-Gitea-Signature"); got != "gitea-sig" {
+			t.Errorf("X-Gitea-Signature = %q, want gitea-sig", got)
+		}
+		if got := fwd.Header.Get("X-Hub-Signature"); got != "sha1=github-sig" {
+			t.Errorf("X-Hub-Signature = %q, want sha1=github-sig", got)
+		}
+		if got := fwd.Header.Get("X-Custom-Header"); got != "" {
+			t.Errorf("X-Custom-Header = %q, want only known signature headers passed through", got)
+		}
+		if got := h.bodyOf(t, fwd); got != `{"event":"push"}` {
+			t.Errorf("forwarded body = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for forward")
+	}
+	h.dispatcher.Shutdown(context.Background())
+}
+
+func TestForwardWithTransformDropsSignatureHeaders(t *testing.T) {
+	h := newHarness(t, `
+routes:
+  - name: transformed
+    match: 'true'
+    forward:
+      - url: http://target
+        body: '{message: .event}'
+`)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"event":"push"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forgejo-Signature", "forgejo-sig")
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+	}
+
+	select {
+	case fwd := <-h.forwarded:
+		if got := fwd.Header.Get("X-Forgejo-Signature"); got != "" {
+			t.Errorf("X-Forgejo-Signature = %q, want empty (signature invalid after transform)", got)
+		}
+		if got := h.bodyOf(t, fwd); got == "" {
+			t.Error("transformed body was empty")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for forward")
+	}
+	h.dispatcher.Shutdown(context.Background())
+}
+
+func TestConfiguredHeaderOverridesSignaturePassthrough(t *testing.T) {
+	h := newHarness(t, `
+routes:
+  - name: overridden
+    match: 'true'
+    forward:
+      - url: http://target
+        headers:
+          X-Forgejo-Signature: static-value
+`)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"event":"push"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forgejo-Signature", "original-sig")
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
+	}
+
+	select {
+	case fwd := <-h.forwarded:
+		if got := fwd.Header.Get("X-Forgejo-Signature"); got != "static-value" {
+			t.Errorf("X-Forgejo-Signature = %q, want static-value (configured headers must win)", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for forward")
+	}
+	h.dispatcher.Shutdown(context.Background())
+}
+
 func TestForwardHeadersOverrideDefaults(t *testing.T) {
 	h := newHarness(t, `
 routes:

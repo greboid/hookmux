@@ -22,6 +22,25 @@ import (
 
 var acceptedMethods = []string{http.MethodPost, http.MethodPut, http.MethodPatch}
 
+// signatureHeaders are forwarded verbatim to destinations when the body is
+// passed through unmodified, letting them verify the sender's original
+// signature. They are dropped when a body transform rewrites the payload,
+// since the signature would no longer match.
+var signatureHeaders = []string{
+	"X-Hub-Signature",
+	"X-Hub-Signature-256",
+	"X-GitHub-Event",
+	"X-GitHub-Delivery",
+	"X-Forgejo-Signature",
+	"X-Forgejo-Event",
+	"X-Forgejo-Event-Type",
+	"X-Forgejo-Delivery",
+	"X-Gitea-Signature",
+	"X-Gitea-Event",
+	"X-Gitea-Event-Type",
+	"X-Gitea-Delivery",
+}
+
 type Webhook struct {
 	routes     *routes.Set
 	dispatcher *Dispatcher
@@ -167,6 +186,13 @@ func (d *Dispatcher) doForward(m *routes.Match, i int, f routes.Forward, orig *h
 		}
 	}
 	req.Header.Set("X-Hookmux-Route", m.Route.Name)
+	if orig != nil && !m.HasTransform(i) {
+		for _, name := range signatureHeaders {
+			if v := orig.Header.Get(name); v != "" {
+				req.Header.Set(name, v)
+			}
+		}
+	}
 	for k, v := range f.Headers {
 		req.Header.Set(k, v)
 	}
