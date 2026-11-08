@@ -341,6 +341,7 @@ routes:
 	req.Header.Set("X-Forgejo-Event", "push")
 	req.Header.Set("X-Gitea-Signature", "gitea-sig")
 	req.Header.Set("X-Hub-Signature", "sha1=github-sig")
+	req.Header.Set("X-Adze-Signature", "sha256=adze-sig")
 	req.Header.Set("X-Custom-Header", "not-a-signature")
 	w := httptest.NewRecorder()
 	h.handler.ServeHTTP(w, req)
@@ -350,6 +351,9 @@ routes:
 
 	select {
 	case fwd := <-h.forwarded:
+		if got := fwd.Header.Get("X-Adze-Signature"); got != "sha256=adze-sig" {
+			t.Errorf("X-Adze-Signature = %q, want sha256=adze-sig", got)
+		}
 		if got := fwd.Header.Get("X-Forgejo-Signature"); got != "forgejo-sig" {
 			t.Errorf("X-Forgejo-Signature = %q, want forgejo-sig", got)
 		}

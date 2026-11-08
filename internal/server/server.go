@@ -39,6 +39,7 @@ var signatureHeaders = []string{
 	"X-Gitea-Event",
 	"X-Gitea-Event-Type",
 	"X-Gitea-Delivery",
+	"X-Adze-Signature",
 }
 
 type Webhook struct {
